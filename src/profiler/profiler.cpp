@@ -36,6 +36,12 @@ http://www.gnu.org/copyleft/gpl.html..
 #include "../utils/dbginterface.h"
 #include "../utils/WoW64.h"
 
+extern "C" {
+#include "Python.h"
+#include "frameobject.h"
+#include "stringobject.h"
+}
+
 #ifdef _WIN64
 #define CONTEXT64_FLAGS		(CONTEXT_AMD64 | CONTEXT_FULL)
 #define CONTEXT32_FLAGS		(WOW64_CONTEXT_i386 | WOW64_CONTEXT_FULL)
@@ -45,6 +51,28 @@ typedef WOW64_CONTEXT CONTEXT32;
 #define CONTEXT32_FLAGS		(CONTEXT_i386 | CONTEXT_FULL)
 typedef CONTEXT CONTEXT32;
 #endif
+
+void __cdecl LOG(const char *format, ...)
+{
+	char    buf[4096], *p = buf;
+	va_list args;
+	int     n;
+
+	va_start(args, format);
+	n = _vsnprintf(p, sizeof buf - 3, format, args); // buf-3 is room for CR/LF/NUL
+	va_end(args);
+
+	p += (n < 0) ? sizeof buf - 3 : n;
+
+	while (p > buf  &&  isspace(p[-1]))
+		*--p = '\0';
+
+	*p++ = '\r';
+	*p++ = '\n';
+	*p = '\0';
+
+	OutputDebugStringA(buf);
+}
 
 
 // DE: 20090325: Profiler no longer owns callstack and flatcounts since it is shared between multipler profilers
@@ -149,6 +177,69 @@ void applyHacks(HANDLE process_handle, CONTEXT32 &context)
 	}
 }
 
+//struct Param {
+//	int a;
+//	char name[64];
+//};
+
+void detectPyFrame(HANDLE process_handle, PROFILER_ADDR bp)
+{
+	SIZE_T numRead = 0;
+
+	SIZE_T count = 4;
+	BYTE* tmp = new BYTE[count];
+
+	//LOG("=======================================\n");
+	PyFrameObject frame;
+	PyTypeObject typeobj;
+	char tp_name[16] = { 0 };
+	
+	for (DWORD kp = bp+8; kp <= bp + (2+1)*4; kp += 4)
+	{
+		//DWORD kp = bp + 8; // arg 0
+		if (ReadProcessMemory(process_handle, (LPCVOID)kp, tmp, count, &numRead) && numRead >= count)
+		{
+			DWORD ptr = (tmp[3] << 24) | (tmp[2] << 16) | (tmp[1] << 8) | (tmp[0] << 0);
+			if (ReadProcessMemory(process_handle, (LPCVOID)ptr, &frame, sizeof(PyFrameObject), &numRead) && numRead >= sizeof(PyFrameObject))
+			{
+				if (ReadProcessMemory(process_handle, (LPCVOID)(frame.ob_type), &typeobj, sizeof(PyTypeObject), &numRead) && numRead >= sizeof(PyTypeObject))
+				{
+					if (ReadProcessMemory(process_handle, (LPCVOID)(typeobj.tp_name), tp_name, 5, &numRead) && numRead >= 5)
+					{
+						if (strstr(tp_name, "frame") > 0)
+						{
+							PyCodeObject code;
+							ReadProcessMemory(process_handle, (LPCVOID)(frame.f_code), &code, sizeof(PyCodeObject), &numRead);
+
+							BYTE tfilename[256] = { 0 };
+							ReadProcessMemory(process_handle, (LPCVOID)(code.co_filename), tfilename, 256, &numRead);
+							const char* filename = PyString_AS_STRING((PyStringObject*)tfilename);
+
+							BYTE fname[256] = { 0 };
+							ReadProcessMemory(process_handle, (LPCVOID)(code.co_name), fname, 256, &numRead);
+							const char* name = PyString_AS_STRING((PyStringObject*)fname);
+
+							LOG("-----found (%p)!   %s, %s, line: %d\n", ptr, name, filename, frame.f_lineno);
+						}
+					}
+				}
+			}
+		}
+	}
+
+	/*int n = 0;
+	for (DWORD kp = bp; n < 10; n++, kp += 4)
+	{
+		if (ReadProcessMemory(process_handle, (LPCVOID)kp, tmp, count, &numRead) && numRead >= count)
+		{
+			DWORD ptr = (tmp[3] << 24) | (tmp[2] << 16) | (tmp[1] << 8) | (tmp[0] << 0);
+			LOG("kp: %p, ptr: %p\n", kp, ptr);
+
+		}
+	}*/
+}
+
+
 bool Profiler::sampleTarget(SAMPLE_TYPE timeSpent, SymbolInfo *syminfo)
 {
 	// DE: 20090325: Moved declaration of stack variables to reduce size of code inside Suspend/Resume thread
@@ -241,6 +332,7 @@ bool Profiler::sampleTarget(SAMPLE_TYPE timeSpent, SymbolInfo *syminfo)
 	ip = threadcontext32.Eip;
 	sp = threadcontext32.Esp;
 	bp = threadcontext32.Ebp;
+
 #endif
 
 	DbgHelp *prevDbgHelp = NULL;
@@ -293,6 +385,8 @@ bool Profiler::sampleTarget(SAMPLE_TYPE timeSpent, SymbolInfo *syminfo)
 		ip = (PROFILER_ADDR)frame.AddrPC.Offset;
 		sp = (PROFILER_ADDR)frame.AddrStack.Offset;
 		bp = (PROFILER_ADDR)frame.AddrFrame.Offset;
+
+		detectPyFrame(target_process, bp);
 
 		// Stop once we hit the end of the stack.
 		if (frame.AddrReturn.Offset == 0)
