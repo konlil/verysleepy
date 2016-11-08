@@ -40,15 +40,25 @@ http://www.gnu.org/copyleft/gpl.html..
 
 // DE: 20090325: Profiler has a list of threads to profile
 // RM: 20130614: Profiler time can now be limited (-1 = until cancelled)
-ProfilerThread::ProfilerThread(HANDLE target_process_, const std::vector<HANDLE>& target_threads, SymbolInfo *sym_info_)
+ProfilerThread::ProfilerThread(HANDLE target_process_, HANDLE target_main_thread, const std::vector<HANDLE>& target_threads, SymbolInfo *sym_info_)
 :	profilers(),
 	target_process(target_process_),
-	sym_info(sym_info_)
+	target_main_thread(target_main_thread),
+	sym_info(sym_info_),
+	watch_pystack(true)
 {
 	// DE: 20090325: Profiler has a list of threads to profile, one Profiler instance per thread
-	profilers.reserve(target_threads.size());
-	for (auto it = target_threads.begin(); it != target_threads.end(); ++it)
-		profilers.push_back(Profiler(target_process_, *it, callstacks, flatcounts));
+	if (!watch_pystack)
+	{
+		profilers.reserve(target_threads.size());
+		for (auto it = target_threads.begin(); it != target_threads.end(); ++it)
+			profilers.push_back(Profiler(target_process_, *it, callstacks, flatcounts, pystacks, false));
+	}
+	else
+	{
+		profilers.reserve(1);
+		profilers.push_back(Profiler(target_process_, target_main_thread, callstacks, flatcounts, pystacks, true));
+	}
 
 	numsamplessofar = 0;
 	done = false;
@@ -97,7 +107,14 @@ void ProfilerThread::sample(const SAMPLE_TYPE timeSpent)
 		try {
 			if (profiler.sampleTarget(timeSpent, sym_info))
 			{
-				++numsamplessofar;
+				if (watch_pystack)
+				{
+					numsamplessofar = pystacks.size();
+				}
+				else 
+				{
+					++numsamplessofar;
+				}
 				++numSuccessful;
 			}
 		}
@@ -145,12 +162,20 @@ void ProfilerThread::sampleLoop()
 		double t = (double)diff / (double)freq.QuadPart;
 
 		__int64 elapsed = now.QuadPart - start.QuadPart;
-		if (!minidump_saved && prefs.saveMinidump>=0 && elapsed >= prefs.saveMinidump * freq.QuadPart)
+		/*if (!minidump_saved && prefs.saveMinidump>=0 && elapsed >= prefs.saveMinidump * freq.QuadPart)
 		{
 			minidump_saved = true;
 			status = L"Saving minidump";
 			minidump = sym_info->saveMinidump();
 			status = NULL;
+			continue;
+		}*/
+		if (prefs.savePyStack >= 0 && elapsed >= prefs.savePyStack * freq.QuadPart)
+		{
+			status = L"Saving pystacks...";
+			savePyStacks();
+			status = NULL;
+			start = now;
 			continue;
 		}
 
@@ -163,6 +188,50 @@ void ProfilerThread::sampleLoop()
 	}
 
 	timeEndPeriod(1);
+}
+
+void ProfilerThread::savePyStacks()
+{
+	if (pystacks.size() <= 0)
+		return;
+
+	wxDateTime now = wxDateTime::Now();
+	std::wstring timestr = now.Format(wxT("%Y%m%d%H%M%S"));
+	std::wstringstream ss;
+	ss << "pystack_depth_" << prefs.pystackDepthThreshold << "_" << timestr << ".txt";
+	std::wstring filename = ss.str();
+	wxFileName fullname(prefs.outputDir, filename);
+
+	wxFFileOutputStream out(fullname.GetFullPath());
+	wxTextOutputStream txt(out);
+	if (!out.IsOk())
+	{
+		error(L"Error writing to file");
+		return;
+	}
+
+	//beginProgress(L"Saving pystacks", pystacks.size());
+	for (int i = 0; i < pystacks.size(); ++i)
+	{
+		PyStack& stack = pystacks[i];
+		txt << "=========== depth: " << stack.size() << " ============\n";
+		for (int j = 0; j < stack.size(); ++j)
+		{
+			PyFrameInfo& info = stack[j];
+			txt << ">> " << info.funcname << ", " << info.filename << ", line: " << info.lineno << "\n";
+		}
+		txt << "\n";
+
+		//updateProgress();
+	}
+
+	if (!out.IsOk())
+	{
+		error(L"Error writing to file");
+		return;
+	}
+
+	pystacks.clear();
 }
 
 void ProfilerThread::saveData()

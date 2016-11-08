@@ -86,7 +86,7 @@ OptionsDlg::OptionsDlg()
 	wxBoxSizer *rootsizer = new wxBoxSizer(wxVERTICAL);
 	wxBoxSizer *topsizer = new wxBoxSizer(wxVERTICAL);
 
-	wxStaticBoxSizer *symsizer = new wxStaticBoxSizer(wxVERTICAL, this, "Symbols");
+	/*wxStaticBoxSizer *symsizer = new wxStaticBoxSizer(wxVERTICAL, this, "Symbols");
 	wxStaticBoxSizer *symdirsizer = new wxStaticBoxSizer(wxVERTICAL, this, "Symbol search path");
 	wxStaticBoxSizer *symsrvsizer = new wxStaticBoxSizer(wxVERTICAL, this, "Symbol server");
 
@@ -179,7 +179,28 @@ OptionsDlg::OptionsDlg()
 	symsizer->Add(symdirsizer, 0, wxALL|wxEXPAND, 5);
 	symsizer->Add(symsrvsizer, 0, wxALL|wxEXPAND, 5);
 	symsizer->Add(minGwDbgHelpSizer, 0, wxALL, 5);
-	symsizer->Add(saveMinidumpSizer, 0, wxALL, 5);
+	symsizer->Add(saveMinidumpSizer, 0, wxALL, 5);*/
+
+	wxStaticBoxSizer *pystacksizer = new wxStaticBoxSizer(wxVERTICAL, this, "Python stack capture");
+	pystacksizer->Add(new wxStaticText(this, -1, "Output file directory:"), 0, wxLEFT | wxTOP, 5);
+	pystackOutDir = new wxDirPickerCtrl(this, -1, prefs.outputDir, "Select a directory to store output files in:",
+		wxDefaultPosition, wxDefaultSize, wxDIRP_USE_TEXTCTRL);
+	pystacksizer->Add(pystackOutDir, 0, wxALL | wxEXPAND, 5);
+
+	savePyStackTimeValue = prefs.savePyStack < 0 ? 0 : prefs.savePyStack;
+	pystacksizer->Add(new wxStaticText(this, -1, "Save python stacks after (seconds): "));
+	savePyStackTime = new wxTextCtrl(
+		this, -1,
+		wxEmptyString, wxDefaultPosition,
+		wxSize(40, -1),
+		0,
+		wxIntegerValidator<int>(&savePyStackTimeValue));
+	pystacksizer->Add(savePyStackTime);
+
+	pystackDepthTHValue = prefs.pystackDepthThreshold < 0 ? 0 : prefs.pystackDepthThreshold;
+	pystacksizer->Add(new wxStaticText(this, -1, "Capture stack depth over: "), 0, wxLEFT | wxTOP, 5);
+	pystackDepthTH = new wxTextCtrl(this, -1, wxEmptyString, wxDefaultPosition, wxSize(40, -1), 0, wxIntegerValidator<int>(&pystackDepthTHValue));
+	pystacksizer->Add(pystackDepthTH);
 
 	wxStaticBoxSizer *throttlesizer = new wxStaticBoxSizer(wxVERTICAL, this, "Sample rate control");
 	throttle = new wxPercentSlider(this, Options_Throttle, prefs.throttle, 1, 100, wxDefaultPosition, wxDefaultSize,
@@ -192,7 +213,9 @@ OptionsDlg::OptionsDlg()
 		"performance."), 0, wxALL, 5);
 	throttlesizer->Add(throttle, 0, wxEXPAND|wxLEFT|wxTOP, 5);
 
-	topsizer->Add(symsizer, 0, wxEXPAND|wxALL, 0);
+	//topsizer->Add(symsizer, 0, wxEXPAND|wxALL, 0);
+	//topsizer->AddSpacer(5);
+	topsizer->Add(pystacksizer, 0, wxEXPAND | wxALL, 0);
 	topsizer->AddSpacer(5);
 	topsizer->Add(throttlesizer, 0, wxEXPAND|wxALL, 0);
 	rootsizer->Add(topsizer, 1, wxEXPAND|wxLEFT|wxTOP|wxRIGHT, 10);
@@ -213,30 +236,33 @@ void OptionsDlg::OnOk(wxCommandEvent& event)
 {
 	if ( Validate() && TransferDataFromWindow() )
 	{
-		prefs.symSearchPath = wxJoin(symPaths->GetStrings(), ';', 0);
+		/*prefs.symSearchPath = wxJoin(symPaths->GetStrings(), ';', 0);
 		prefs.useSymServer = useSymServer->GetValue();
 		prefs.symCacheDir = symCacheDir->GetPath();
 		prefs.symServer = symServer->GetValue();
 		prefs.useWine = mingwWine->GetValue();
-		prefs.saveMinidump = saveMinidump->GetValue() ? saveMinidumpTimeValue : -1;
+		prefs.saveMinidump = saveMinidump->GetValue() ? saveMinidumpTimeValue : -1;*/
 		prefs.throttle = throttle->GetValue();
+		prefs.outputDir = pystackOutDir->GetPath();
+		prefs.pystackDepthThreshold = pystackDepthTHValue < 0 ? 0 : pystackDepthTHValue;
+		prefs.savePyStack = savePyStackTimeValue < 1 ? 1 : savePyStackTimeValue;
 		EndModal(wxID_OK);
 	}
 }
 
 void OptionsDlg::OnUseSymServer(wxCommandEvent& event)
 {
-	bool enabled = useSymServer->GetValue();
+	/*bool enabled = useSymServer->GetValue();
 	symCacheDir->Enable(enabled);
-	symServer->Enable(enabled);
+	symServer->Enable(enabled);*/
 }
 
 void OptionsDlg::UpdateSymPathButtons()
 {
-	int sel = symPaths->GetSelection();
+	/*int sel = symPaths->GetSelection();
 	symPathRemove  ->Enable(sel >= 0);
 	symPathMoveUp  ->Enable(sel > 0);
-	symPathMoveDown->Enable(sel >= 0 && sel < (int)symPaths->GetCount()-1);
+	symPathMoveDown->Enable(sel >= 0 && sel < (int)symPaths->GetCount()-1);*/
 }
 
 void OptionsDlg::OnSymPath( wxCommandEvent & event )
@@ -246,45 +272,45 @@ void OptionsDlg::OnSymPath( wxCommandEvent & event )
 
 void OptionsDlg::OnSymPathAdd( wxCommandEvent & event )
 {
-	wxDirDialog dlg(this, "Select a symbol search path to add");
+	/*wxDirDialog dlg(this, "Select a symbol search path to add");
 	if (dlg.ShowModal()==wxID_OK)
 	{
 		int sel = symPaths->Append(dlg.GetPath());
 		symPaths->Select(sel);
 		UpdateSymPathButtons();
-	}
+	}*/
 }
 
 void OptionsDlg::OnSymPathRemove( wxCommandEvent & event )
 {
-	int sel = symPaths->GetSelection();
+	/*int sel = symPaths->GetSelection();
 	symPaths->Delete(sel);
 	if (sel < (int)symPaths->GetCount())
 		symPaths->Select(sel);
-	UpdateSymPathButtons();
+	UpdateSymPathButtons();*/
 }
 
 void OptionsDlg::OnSymPathMoveUp( wxCommandEvent & event )
 {
-	int sel = symPaths->GetSelection();
+	/*int sel = symPaths->GetSelection();
 	wxString s = symPaths->GetString(sel);
 	symPaths->Delete(sel);
 	symPaths->Insert(s, sel-1);
 	symPaths->Select(sel-1);
-	UpdateSymPathButtons();
+	UpdateSymPathButtons();*/
 }
 
 void OptionsDlg::OnSymPathMoveDown( wxCommandEvent & event )
 {
-	int sel = symPaths->GetSelection();
+	/*int sel = symPaths->GetSelection();
 	wxString s = symPaths->GetString(sel);
 	symPaths->Delete(sel);
 	symPaths->Insert(s, sel+1);
 	symPaths->Select(sel+1);
-	UpdateSymPathButtons();
+	UpdateSymPathButtons();*/
 }
 
 void OptionsDlg::OnSaveMinidump( wxCommandEvent & event )
 {
-	saveMinidumpTime->Enable(saveMinidump->IsChecked());
+	/*saveMinidumpTime->Enable(saveMinidump->IsChecked());*/
 }

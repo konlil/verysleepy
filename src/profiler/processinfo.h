@@ -51,6 +51,7 @@ public:
 	static ProcessInfo FindProcessById(DWORD process_id);
 
 	std::vector<ThreadInfo> threads;
+	HANDLE main_thread_handle;
 
 	const std::wstring& getName() const { return name; }
 	const DWORD getID() const { return id; }

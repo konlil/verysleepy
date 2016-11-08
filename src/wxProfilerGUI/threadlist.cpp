@@ -290,7 +290,8 @@ void ThreadList::updateTimes()
 		try {
 			std::map<CallStack, SAMPLE_TYPE> callstacks;
 			std::map<PROFILER_ADDR, SAMPLE_TYPE> flatcounts;
-			Profiler profiler(process_handle, thread_handle, callstacks, flatcounts);
+			std::vector<PyStack> pystacks;
+			Profiler profiler(process_handle, thread_handle, callstacks, flatcounts, pystacks, true);
 			bool ok = profiler.sampleTarget(0, syminfo);
 			if (ok && !profiler.targetExited() && callstacks.size() > 0)
 			{

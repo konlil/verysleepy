@@ -351,6 +351,7 @@ void ThreadPicker::AttachToProcess(bool allThreads)
 	//Get handle to target process
 	//------------------------------------------------------------------------
 	attach_info->process_handle = processInfo->getProcessHandle(); 
+	attach_info->main_thread_handle = processInfo->main_thread_handle;
 	attach_info->sym_info = processlist->takeSymbolInfo();
 	enforce(attach_info->sym_info, "No symbol info");
 	

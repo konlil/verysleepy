@@ -72,7 +72,7 @@ std::wstring cmdline_load, cmdline_save, cmdline_run, cmdline_attach;
 long cmdline_timeout = -1;  // -1 means profile until cancelled
 std::vector<std::wstring> tmp_files;
 Prefs prefs;
-wxConfig config(_T(APPNAME) L" " _T(VERSION), _T(VENDOR));
+wxConfig config(_T(APPNAME) L" " _T(VERSION), _T(VENDOR));  // HKCU\SOFTWARE\codersnotes.com\Very Sleepy 0.91\
 
 ProfilerGUI::ProfilerGUI()
 {
@@ -160,6 +160,7 @@ std::wstring ProfilerGUI::LaunchProfiler(const AttachInfo *info)
 	// DE: 20090325 attaches to a specific list of threads
 	ProfilerThread* profilerthread = new ProfilerThread(
 		info->process_handle,
+		info->main_thread_handle,
 		info->thread_handles,
 		info->sym_info
 		);
@@ -290,6 +291,7 @@ AttachInfo *ProfilerGUI::RunProcess(const std::wstring &run_cmd, const std::wstr
 
 	std::unique_ptr<AttachInfo> output(new AttachInfo);
 	output->process_handle = pi.hProcess;
+	output->main_thread_handle = pi.hThread;
 	output->thread_handles.push_back(pi.hThread);
 	output->sym_info = new SymbolInfo;
 	TryLoadSymbols(output.get());
@@ -309,6 +311,7 @@ AttachInfo * ProfilerGUI::AttachToProcess(const std::wstring& processId)
 	}
 	ProcessInfo process_info = ProcessInfo::FindProcessById(processId_dw);
 	AttachInfo* attach_info =new AttachInfo();
+	attach_info->main_thread_handle = process_info.main_thread_handle;
 	attach_info->process_handle = process_info.getProcessHandle();
 	for(auto thread_info = process_info.threads.begin(); thread_info!= process_info.threads.end(); ++thread_info)
 	{
@@ -427,7 +430,10 @@ bool ProfilerGUI::OnInit()
 		prefs.symCacheDir = config.Read("SymbolCache", symCache);
 		prefs.useWine = config.Read("UseWine", (long)0) != 0;
 		prefs.saveMinidump = config.Read("SaveMinidump", -1);
+		prefs.savePyStack = config.Read("SavePyStack", 30);
+		prefs.pystackDepthThreshold = config.Read("PystackDepthThreshold", 10);
 		prefs.throttle = config.Read("SpeedThrottle", 100);
+		prefs.outputDir = config.Read("OutputDirectory", "");
 		if (prefs.throttle < 1)
 			prefs.throttle = 1;
 		if (prefs.throttle > 100)
@@ -514,8 +520,11 @@ bool ProfilerGUI::Run()
 		return false;	// No GUI, just save and exit
 	}
 
-	LoadProfileData(filename);
-	return true;
+	//no gui, just exit directly.
+	return false;
+
+	//LoadProfileData(filename);
+	//return true;
 }
 
 int ProfilerGUI::OnExit()
@@ -526,7 +535,10 @@ int ProfilerGUI::OnExit()
 	config.Write("SymbolCache", prefs.symCacheDir);
 	config.Write("UseWine", prefs.useWine);
 	config.Write("SaveMinidump", prefs.saveMinidump);
+	config.Write("SavePyStack", prefs.savePyStack);
 	config.Write("SpeedThrottle", prefs.throttle);
+	config.Write("PystackDepthThreshold", prefs.pystackDepthThreshold);
+	config.Write("OutputDirectory", prefs.outputDir);
 
 	return wxApp::OnExit();
 }

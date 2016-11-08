@@ -59,7 +59,7 @@ public:
 	=====================================================================*/
 	// DE: 20090325 Profiler thread now has a vector of threads to profile
 	// RM: 20130614 Profiler time can now be limited (-1 = until cancelled)
-	ProfilerThread(HANDLE target_process, const std::vector<HANDLE>& target_threads, SymbolInfo *sym_info);
+	ProfilerThread(HANDLE target_process, HANDLE target_main_thread, const std::vector<HANDLE>& target_threads, SymbolInfo *sym_info);
 
 	virtual ~ProfilerThread();
 
@@ -84,6 +84,7 @@ private:
 
 	void sampleLoop();
 	void saveData();
+	void savePyStacks();
 
 	std::wstring symbolsStage;
 	int symbolsPermille, symbolsDone, symbolsTotal;
@@ -93,6 +94,7 @@ private:
 	// DE: 20090325 callstacks and flatcounts are shared for all threads to profile
 	std::map<CallStack, SAMPLE_TYPE> callstacks;
 	std::map<PROFILER_ADDR, SAMPLE_TYPE> flatcounts;
+	std::vector<PyStack> pystacks;
 
 	// DE: 20090325 one Profiler instance per thread to profile
 	std::vector<Profiler> profilers;
@@ -106,11 +108,14 @@ private:
 	bool failed;
 	bool cancelled;
 	HANDLE target_process;
+	HANDLE target_main_thread;
 	std::wstring filename;
 	std::wstring minidump;
 	SymbolInfo *sym_info;
 
 	DWORD startTick;
+
+	bool watch_pystack;
 };
 
 

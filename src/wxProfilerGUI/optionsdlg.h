@@ -48,7 +48,13 @@ private:
 	void OnUseSymServer( wxCommandEvent & event );
 	void OnSaveMinidump( wxCommandEvent & event );
 
-	wxListBox *symPaths;
+	wxDirPickerCtrl *pystackOutDir;
+	wxTextCtrl *savePyStackTime, *pystackDepthTH;
+	int savePyStackTimeValue;
+	int pystackDepthTHValue;
+	wxSlider *throttle;
+
+	/*wxListBox *symPaths;
 	wxButton *symPathAdd, *symPathRemove, *symPathMoveUp, *symPathMoveDown;
 	wxCheckBox *useSymServer;
 	wxDirPickerCtrl *symCacheDir;
@@ -58,7 +64,7 @@ private:
 	wxRadioButton *mingwWine;
 	wxRadioButton *mingwDrMingw;
 	int saveMinidumpTimeValue;
-	wxSlider *throttle;
+	wxSlider *throttle;*/
 
 	DECLARE_EVENT_TABLE()
 };

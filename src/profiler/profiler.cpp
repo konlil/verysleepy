@@ -25,7 +25,7 @@ http://www.gnu.org/copyleft/gpl.html..
 
 #include "profiler.h"
 
-
+#include "../wxprofilergui/profilergui.h"
 #include "../utils/stringutils.h"
 #include "../utils/osutils.h"
 #include "symbolinfo.h"
@@ -78,12 +78,15 @@ void __cdecl LOG(const char *format, ...)
 // DE: 20090325: Profiler no longer owns callstack and flatcounts since it is shared between multipler profilers
 
 Profiler::Profiler(HANDLE target_process_, HANDLE target_thread_,
-				   std::map<CallStack, SAMPLE_TYPE>& callstacks_, std::map<PROFILER_ADDR, SAMPLE_TYPE>& flatcounts_)
+				   std::map<CallStack, SAMPLE_TYPE>& callstacks_, std::map<PROFILER_ADDR, SAMPLE_TYPE>& flatcounts_, 
+				   std::vector<PyStack>& pystacks_, bool watch_pystack_)
 :	target_process(target_process_),
 	target_thread(target_thread_),
 	callstacks(callstacks_),
 	flatcounts(flatcounts_),
-	is64BitProcess(Is64BitProcess(target_process_))
+	is64BitProcess(Is64BitProcess(target_process_)),
+	pystacks(pystacks_),
+	watch_pystack(watch_pystack_)
 {
 }
 
@@ -94,7 +97,9 @@ Profiler::Profiler(const Profiler& iOther)
 	target_thread(iOther.target_thread),
 	callstacks(iOther.callstacks),
 	flatcounts(iOther.flatcounts),
-	is64BitProcess(iOther.is64BitProcess)
+	is64BitProcess(iOther.is64BitProcess),
+	pystacks(iOther.pystacks),
+	watch_pystack(iOther.watch_pystack)
 {
 }
 
@@ -106,6 +111,7 @@ Profiler& Profiler::operator=(const Profiler& iOther)
 	target_thread = iOther.target_thread;
 	callstacks = iOther.callstacks;
 	flatcounts = iOther.flatcounts;
+	pystacks = iOther.pystacks;
 
 	return *this;
 }
@@ -182,7 +188,40 @@ void applyHacks(HANDLE process_handle, CONTEXT32 &context)
 //	char name[64];
 //};
 
-void detectPyFrame(HANDLE process_handle, PROFILER_ADDR bp)
+
+
+PyFrameObject* readPyFrame(HANDLE process_handle, PyFrameObject* frame, PyFrameInfo& finfo, bool remote_frame)
+{
+	SIZE_T numRead = 0;
+
+	PyCodeObject code;
+	PyFrameObject* back_frame;
+	
+	if (remote_frame) {
+		PyFrameObject lframe;
+		ReadProcessMemory(process_handle, (LPCVOID)frame, &lframe, sizeof(PyFrameObject), &numRead);
+		ReadProcessMemory(process_handle, (LPCVOID)(lframe.f_code), &code, sizeof(PyCodeObject), &numRead);
+		finfo.lineno = lframe.f_lineno;
+		back_frame = lframe.f_back;
+	}
+	else {
+		ReadProcessMemory(process_handle, (LPCVOID)(frame->f_code), &code, sizeof(PyCodeObject), &numRead);
+		finfo.lineno = frame->f_lineno;
+		back_frame = frame->f_back;
+	}
+
+	BYTE tfilename[256] = { 0 };
+	ReadProcessMemory(process_handle, (LPCVOID)(code.co_filename), tfilename, 256, &numRead);
+	finfo.filename = PyString_AS_STRING((PyStringObject*)tfilename);
+	
+	BYTE tfuncname[256] = { 0 };
+	ReadProcessMemory(process_handle, (LPCVOID)(code.co_name), tfuncname, 256, &numRead);
+	finfo.funcname = PyString_AS_STRING((PyStringObject*)tfuncname);
+
+	return back_frame;
+}
+
+bool detectPyFrame(HANDLE process_handle, PROFILER_ADDR bp, PyStack& out_stack)
 {
 	SIZE_T numRead = 0;
 
@@ -194,49 +233,71 @@ void detectPyFrame(HANDLE process_handle, PROFILER_ADDR bp)
 	PyTypeObject typeobj;
 	char tp_name[16] = { 0 };
 	
-	for (DWORD kp = bp+8; kp <= bp + (2+1)*4; kp += 4)
+	for (DWORD kp = bp; kp <= bp + (5+1)*4; kp += 4)
 	{
 		//DWORD kp = bp + 8; // arg 0
 		if (ReadProcessMemory(process_handle, (LPCVOID)kp, tmp, count, &numRead) && numRead >= count)
 		{
 			DWORD ptr = (tmp[3] << 24) | (tmp[2] << 16) | (tmp[1] << 8) | (tmp[0] << 0);
+			// try read a frame object
 			if (ReadProcessMemory(process_handle, (LPCVOID)ptr, &frame, sizeof(PyFrameObject), &numRead) && numRead >= sizeof(PyFrameObject))
 			{
+				// try read type object
 				if (ReadProcessMemory(process_handle, (LPCVOID)(frame.ob_type), &typeobj, sizeof(PyTypeObject), &numRead) && numRead >= sizeof(PyTypeObject))
 				{
+					// try read type name
 					if (ReadProcessMemory(process_handle, (LPCVOID)(typeobj.tp_name), tp_name, 5, &numRead) && numRead >= 5)
 					{
 						if (strstr(tp_name, "frame") > 0)
 						{
-							PyCodeObject code;
-							ReadProcessMemory(process_handle, (LPCVOID)(frame.f_code), &code, sizeof(PyCodeObject), &numRead);
+							// Found it!!
+							// Read the function name, file name & line number.
 
-							BYTE tfilename[256] = { 0 };
-							ReadProcessMemory(process_handle, (LPCVOID)(code.co_filename), tfilename, 256, &numRead);
-							const char* filename = PyString_AS_STRING((PyStringObject*)tfilename);
+							// Read py frame info
+							/*PyFrameInfo finfo;
+							readPyFrame(process_handle, &frame, finfo, false);
+							LOG("-----found (%p)!   %s, %s, line: %d\n", ptr, finfo.funcname.c_str(), finfo.filename.c_str(), finfo.lineno);*/
 
-							BYTE fname[256] = { 0 };
-							ReadProcessMemory(process_handle, (LPCVOID)(code.co_name), fname, 256, &numRead);
-							const char* name = PyString_AS_STRING((PyStringObject*)fname);
+							// Unwind py stack
+							{
+								PyFrameInfo finfo;
+								size_t frame_depth = 0;
+								PyFrameObject* rframe = (PyFrameObject*)ptr;
+								while (rframe) {
+									frame_depth++;
+									// read frame object from remote to local
+									rframe = readPyFrame(process_handle, rframe, finfo, true);
+									out_stack.push_back(finfo);
+									//LOG("\t>> %s, %s, line: %d\n", finfo.funcname.c_str(), finfo.filename.c_str(), finfo.lineno);
+								}
+								//LOG("+++++depth: %d\n", frame_depth);
+							}
 
-							LOG("-----found (%p)!   %s, %s, line: %d\n", ptr, name, filename, frame.f_lineno);
+							// Read thread state object
+							//if (frame.f_tstate)
+							//{
+							//	size_t frame_depth = 0;
+							//	PyThreadState thread_state;
+							//	ReadProcessMemory(process_handle, (LPCVOID)(frame.f_tstate), &thread_state, sizeof(PyThreadState), &numRead);
+
+							//	PyFrameObject* rframe = thread_state.frame;
+							//	while (rframe) {
+							//		frame_depth++;
+							//		// read frame object from remote to local
+							//		rframe = readPyFrame(process_handle, rframe, finfo, true);
+							//		LOG("\t>> %s, %s, line: %d\n", finfo.funcname.c_str(), finfo.filename.c_str(), finfo.lineno);
+							//	}
+							//	LOG("+++++depth: %d\n", frame_depth);
+							//}
+							return true;
 						}
 					}
 				}
 			}
 		}
 	}
-
-	/*int n = 0;
-	for (DWORD kp = bp; n < 10; n++, kp += 4)
-	{
-		if (ReadProcessMemory(process_handle, (LPCVOID)kp, tmp, count, &numRead) && numRead >= count)
-		{
-			DWORD ptr = (tmp[3] << 24) | (tmp[2] << 16) | (tmp[1] << 8) | (tmp[0] << 0);
-			LOG("kp: %p, ptr: %p\n", kp, ptr);
-
-		}
-	}*/
+	
+	return false;
 }
 
 
@@ -246,6 +307,8 @@ bool Profiler::sampleTarget(SAMPLE_TYPE timeSpent, SymbolInfo *syminfo)
 
 	CallStack stack;
 	stack.depth = 0;
+
+	PyStack pystack;
 
 	STACKFRAME64 frame;
 	PROFILER_ADDR ip, sp, bp;
@@ -333,6 +396,20 @@ bool Profiler::sampleTarget(SAMPLE_TYPE timeSpent, SymbolInfo *syminfo)
 	sp = threadcontext32.Esp;
 	bp = threadcontext32.Ebp;
 
+	if(watch_pystack)
+	{
+		bool detected = detectPyFrame(target_process, bp, pystack);
+		if (!ResumeThread(target_thread))
+			throw ProfilerExcep(L"ResumeThread failed.");
+
+		if (pystack.size() > prefs.pystackDepthThreshold)
+		{
+			pystacks.push_back(pystack);
+		}
+
+		return true;
+	}
+
 #endif
 
 	DbgHelp *prevDbgHelp = NULL;
@@ -386,7 +463,7 @@ bool Profiler::sampleTarget(SAMPLE_TYPE timeSpent, SymbolInfo *syminfo)
 		sp = (PROFILER_ADDR)frame.AddrStack.Offset;
 		bp = (PROFILER_ADDR)frame.AddrFrame.Offset;
 
-		detectPyFrame(target_process, bp);
+		//detectPyFrame(target_process, bp);
 
 		// Stop once we hit the end of the stack.
 		if (frame.AddrReturn.Offset == 0)

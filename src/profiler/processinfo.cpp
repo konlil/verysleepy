@@ -32,7 +32,8 @@ http://www.gnu.org/copyleft/gpl.html..
 ProcessInfo::ProcessInfo(DWORD id_, const std::wstring& name_, HANDLE process_handle_)
 :	id(id_),
 	name(name_),
-	process_handle(process_handle_)
+	process_handle(process_handle_),
+	main_thread_handle(INVALID_HANDLE_VALUE)
 {
 	prevKernelTime.dwHighDateTime = prevKernelTime.dwLowDateTime = 0;
 	prevUserTime.dwHighDateTime = prevUserTime.dwLowDateTime = 0;
@@ -108,6 +109,12 @@ void ProcessInfo::enumProcesses(std::vector<ProcessInfo>& processes_out)
 				{
 					DWORD threadID = threadinfo.th32ThreadID;
 					HANDLE threadHandle = OpenThread( THREAD_ALL_ACCESS, FALSE, threadID );
+					
+					// Assume process's main thread always be the first thread
+					if (processes_out[i].threads.size() == 0)
+					{
+						processes_out[i].main_thread_handle = threadHandle;
+					}
 
 					processes_out[i].threads.push_back(ThreadInfo(threadID, threadHandle));
 					break;

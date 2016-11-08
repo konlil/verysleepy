@@ -53,6 +53,7 @@ struct AttachInfo
 	~AttachInfo();
 
 	HANDLE process_handle;
+	HANDLE main_thread_handle;
 	std::vector<HANDLE> thread_handles;
 	SymbolInfo *sym_info;
 	int limit_profile_time;
@@ -67,8 +68,11 @@ public:
 	{
 		useSymServer = false;
 		saveMinidump = -1;
+		savePyStack = 30;
 		throttle = 100;
 		useWine = false;
+		pystackDepthThreshold = 10;
+		outputDir = "";
 	}
 
 	wxString symSearchPath;
@@ -76,8 +80,11 @@ public:
 	wxString symCacheDir;
 	wxString symServer;
 	int saveMinidump; // Save minidump after X seconds. -1 = disabled
+	int savePyStack;	// Save pystack after X seconds. -1 = disabled
 	int throttle;
 	bool useWine;
+	int pystackDepthThreshold;
+	wxString outputDir;
 
 	// Add any configured search paths, and the symbol server if enabled.
 	void AdjustSymbolPath(std::wstring &sympath, bool download)

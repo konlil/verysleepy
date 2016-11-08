@@ -73,6 +73,14 @@ public:
 	}
 };
 
+struct PyFrameInfo {
+	std::string funcname;
+	std::string filename;
+	int lineno;
+};
+
+typedef std::vector<PyFrameInfo> PyStack;
+
 class ProfilerExcep
 {
 public:
@@ -99,7 +107,8 @@ public:
 	=====================================================================*/
 	// DE: 20090325: Profiler no longer owns callstack and flatcounts since it is shared between multipler profilers
 	Profiler(HANDLE target_process, HANDLE target_thread,
-		std::map<CallStack, SAMPLE_TYPE>& callstacks, std::map<PROFILER_ADDR, SAMPLE_TYPE>& flatcounts);
+		std::map<CallStack, SAMPLE_TYPE>& callstacks, std::map<PROFILER_ADDR, SAMPLE_TYPE>& flatcounts, 
+		std::vector<PyStack>& pystacks, bool watch_pystack);
 
 	// DE: 20090325: Need copy constructor since it is put in a std::vector
 	Profiler(const Profiler& iOther);
@@ -112,6 +121,9 @@ public:
 	std::map<CallStack, SAMPLE_TYPE>& callstacks;
 	std::map<PROFILER_ADDR, SAMPLE_TYPE>& flatcounts;
 	const bool is64BitProcess;
+
+	std::vector<PyStack>& pystacks;
+	const bool watch_pystack;
 
 	bool sampleTarget(SAMPLE_TYPE timeSpent, SymbolInfo *syminfo);//throws ProfilerExcep
 	bool targetExited() const;
